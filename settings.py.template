@@ -1,0 +1,7 @@
+ROOT_JOBRUN_URL = "http://jenkins:8080/job/jobname/283"
+TEST_IDENTIFIER_PREFIX = "AUTO-"
+TEST_IDENTIFIER_MARKER = "test_id"  # for example: @pytest.mark.test_id("AUTO-1234")
+ALLURE_REPORTS_DIRECTORY = "~/vesper_allure_test_reports"
+AGGREGATED_REPORTS_DIRECTORY = "~/vesper_test_reports_aggregated"
+BACKTRACE_OUTPUT_DIRECTORY = "~/vesper_test_backtraces"
+TEST_LOGS_OUTPUT_DIRECTORY = "~/vesper_test_logs"
