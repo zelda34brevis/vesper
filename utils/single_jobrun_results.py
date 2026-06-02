@@ -10,7 +10,7 @@ from runtime_context import JENKINS_USERNAME, JENKINS_API_TOKEN
 from settings import ALLURE_REPORTS_DIRECTORY
 from . import allure_zip_parser
 from .filesystem_helpers import make_safe_component
-from .jenkins_helpers import canonicalize_run_url, create_url_opener, fetch_url_bytes, fetch_url_json, \
+from .jenkins_helpers import normalize_run_url, create_url_opener, fetch_url_bytes, fetch_url_json, \
     parse_job_name_and_run_number
 
 module_logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def collect_test_results_from_allure_report(
     jenkins_api_token = JENKINS_API_TOKEN if jenkins_api_token is None else jenkins_api_token
 
     module_logger.debug(f"Normalizing run URL: {job_run_url}")
-    normalized_run_url = canonicalize_run_url(job_run_url)
+    normalized_run_url = normalize_run_url(job_run_url)
     module_logger.debug(f"Normalized run URL: {normalized_run_url}")
     module_logger.debug(f"Creating opener: auth_enabled={bool(jenkins_username and jenkins_api_token)}")
     http_opener = create_url_opener(jenkins_username=jenkins_username, jenkins_api_token=jenkins_api_token)

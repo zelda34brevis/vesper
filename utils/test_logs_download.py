@@ -7,7 +7,7 @@ from urllib.parse import quote, unquote
 
 from runtime_context import JENKINS_API_TOKEN, JENKINS_USERNAME, test_logs_output_directory
 from .filesystem_helpers import make_safe_component
-from .jenkins_helpers import canonicalize_run_url, create_url_opener, download_url_to_file, parse_job_name_and_run_number, \
+from .jenkins_helpers import normalize_run_url, create_url_opener, download_url_to_file, parse_job_name_and_run_number, \
     fetch_url_json
 
 module_logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def _determine_run_scope_dir(job_run_url, logs_scope_name = None) -> Path:
         safe_scope_label = unquote(logs_scope_name).replace("/", "_").strip() or "unknown_scope"
         return test_logs_output_directory / safe_scope_label
 
-    normalized_run_url = canonicalize_run_url(job_run_url)
+    normalized_run_url = normalize_run_url(job_run_url)
     job_display_name, job_run_number = parse_job_name_and_run_number(normalized_run_url)
     safe_job_label = make_safe_component(job_display_name, default_value="unknown_job", allow_dots=True)
     return test_logs_output_directory / f"{safe_job_label}-{job_run_number}"
@@ -77,7 +77,7 @@ def fetch_test_logs_artifact_for_test(
     jenkins_username = JENKINS_USERNAME if jenkins_username is None else jenkins_username
     jenkins_api_token = JENKINS_API_TOKEN if jenkins_api_token is None else jenkins_api_token
 
-    normalized_run_url = canonicalize_run_url(job_run_url)
+    normalized_run_url = normalize_run_url(job_run_url)
     http_opener = create_url_opener(jenkins_username=jenkins_username, jenkins_api_token=jenkins_api_token)
     run_scope_directory = _determine_run_scope_dir(job_run_url=normalized_run_url, logs_scope_name=logs_scope_name)
 

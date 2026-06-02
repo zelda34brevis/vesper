@@ -5,48 +5,60 @@ import traceback
 
 from runtime_context import backtrace_output_directory
 from .backtrace_files import remove_skipped_and_empty_backtraces, store_test_backtrace_files
-from .jenkins_helpers import canonicalize_run_url, parse_job_name_and_run_number
 from .downstream_jobruns import discover_downstream_jobrun_urls
+from .jenkins_helpers import normalize_run_url, parse_job_name_and_run_number
 from .multi_jobrun_csv_export import collect_from_jobruns_and_write_csv
 from .pipeline_report_paths import make_pipeline_cache_scope_dirname
-from .test_result_enrichment import attach_test_logs_to_single_result
 from .single_jobrun_results import collect_test_results_from_allure_report
+from .test_result_enrichment import attach_test_logs_to_single_result
 
 
-def export_pipeline_results(
-    pipeline_execution_url,
-    destination_csv_path,
-    max_traversal_depth = 25,
-    retain_latest_execution_per_job = True,
-) -> int:
-    """Collect downstream runs for a pipeline execution and export every test result to CSV."""
+def export_multi_jobs_results(
+        pipeline_execution_url: str | None,
+        destination_csv_path,
+        max_traversal_depth=25,
+        jobrun_url_list: list[str] = None,
+        retain_latest_execution_per_job=True) -> int:
+    """Collect multi job execution, download artifacts and export all test results to single CSV."""
+
+    if pipeline_execution_url is not None and jobrun_url_list is None:
+        mode = 'pipeline'
+        cache_scope_directory_name = make_pipeline_cache_scope_dirname(pipeline_execution_url)
+
+    elif pipeline_execution_url is None and jobrun_url_list is not None:
+        mode = 'job_list'
+        cache_scope_directory_name = destination_csv_path.stem
+    else:
+        raise ValueError("Invalid input: Provide either pipeline_execution_url OR job_list")
+
     module_logger = logging.getLogger(__name__)
     scoped_logger = module_logger
-    scoped_logger.debug(
-        f"Launching pipeline export: root_run_url={pipeline_execution_url}, output_csv={destination_csv_path}, max_depth={max_traversal_depth}"
-    )
-    cache_scope_directory_name = make_pipeline_cache_scope_dirname(pipeline_execution_url)
+
     backtrace_scope_directory = (backtrace_output_directory / cache_scope_directory_name).resolve()
     scoped_logger.debug(f"Selected cache-scope directory: {cache_scope_directory_name}")
     scoped_logger.debug(f"Selected backtrace-scope directory: {backtrace_scope_directory}")
 
-    downstream_jobrun_urls = discover_downstream_jobrun_urls(pipeline_execution_url=pipeline_execution_url, max_traversal_depth=max_traversal_depth)
-    if not downstream_jobrun_urls:
-        fallback_root_run_url = canonicalize_run_url(pipeline_execution_url)
-        scoped_logger.warning(
-            "No downstream job runs were found for root run %s. "
-            "Switching to single-job mode and processing the root run directly.",
-            fallback_root_run_url,
-        )
-        downstream_jobrun_urls = [fallback_root_run_url]
-    scoped_logger.debug(f"Total downstream job runs found: {len(downstream_jobrun_urls)}")
+    if mode == 'pipeline':
+        jobrun_urls = discover_downstream_jobrun_urls(pipeline_execution_url=pipeline_execution_url, max_traversal_depth=max_traversal_depth)
+        if not jobrun_urls:
+            fallback_root_run_url = normalize_run_url(pipeline_execution_url)
+            scoped_logger.warning(
+                "No downstream job runs were found for root run %s. "
+                "Switching to single-job mode and processing the root run directly.",
+                fallback_root_run_url,
+            )
+            jobrun_urls = [fallback_root_run_url]
+    else:
+        jobrun_urls = jobrun_url_list
+
+    scoped_logger.debug(f"Total job runs found: {len(jobrun_urls)}")
 
     successful_jobrun_urls: list[str] = []
     single_run_results: list[dict] = []
     test_logs_artifact_cache: dict[tuple[str, str], str | None] = {}
     failed_jobrun_count = 0
 
-    for current_jobrun_url in downstream_jobrun_urls:
+    for current_jobrun_url in jobrun_urls:
         job_display_name, job_run_number = parse_job_name_and_run_number(current_jobrun_url)
         scoped_logger.info(f"Processing downstream job started: {job_display_name} #{job_run_number}")
         try:
@@ -77,7 +89,6 @@ def export_pipeline_results(
         except Exception as error_details:
             failed_jobrun_count += 1
             scoped_logger.warning(f"Problem: Could not complete single-run extraction for {current_jobrun_url}: {error_details}")
-            scoped_logger.warning(f"Stack trace: {traceback.format_exc()}")
 
     scoped_logger.debug(
         f"Single-run extraction complete: success={len(successful_jobrun_urls)}, failed={failed_jobrun_count}"

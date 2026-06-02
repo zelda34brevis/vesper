@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 
 
 def render_elapsed_time(total_elapsed_seconds_input) -> str:
@@ -11,3 +12,12 @@ def render_elapsed_time(total_elapsed_seconds_input) -> str:
 	hour_count, remaining_seconds = divmod(total_elapsed_seconds, 3600)
 	minute_count, second_count = divmod(remaining_seconds, 60)
 	return f"{hour_count:02d}:{minute_count:02d}:{second_count:02d}"
+
+
+def get_timestamp_iso():
+	ts = datetime.now(timezone.utc).isoformat(timespec='seconds')
+	ts = ts.replace(":", "-")
+	ts = ts.replace("+00-00", "")
+	ts = ts.replace("-", "")
+	ts = ts.replace("T", "_")
+	return ts
