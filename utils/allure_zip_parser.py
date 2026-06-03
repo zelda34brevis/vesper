@@ -108,76 +108,6 @@ def _read_testrun_id(test_result_payload, test_case_filename) -> str:
     return _sanitize_testrun_id(PurePosixPath(test_case_filename).stem) or "unknown_testrun"
 
 
-def _read_trace_from_status_fields(status_payload) -> str:
-    """Read traceback-like text from common Allure status fields."""
-    if not isinstance(status_payload, dict):
-        return ""
-
-    # Different Allure producers store traceback/message values under different keys.
-    for lookup_key in ("statusTrace", "trace", "statusMessage", "message"):
-        current_value = status_payload.get(lookup_key)
-        if isinstance(current_value, str) and current_value.strip():
-            return current_value.strip()
-
-    status_details_payload = status_payload.get("statusDetails")
-    if not isinstance(status_details_payload, dict):
-        return ""
-
-    for lookup_key in ("trace", "statusTrace", "message", "statusMessage"):
-        current_value = status_details_payload.get(lookup_key)
-        if isinstance(current_value, str) and current_value.strip():
-            return current_value.strip()
-
-    return ""
-
-
-def _read_trace_from_stage_tree(stage_payload) -> str:
-    """Recursively search the stage payload and nested steps for traceback text."""
-    if not isinstance(stage_payload, dict):
-        return ""
-
-    direct_traceback = _read_trace_from_status_fields(stage_payload)
-    if direct_traceback:
-        return direct_traceback
-
-    step_entries = stage_payload.get("steps")
-    if not isinstance(step_entries, list):
-        return ""
-
-    for step_entry in step_entries:
-        trace_text = _read_trace_from_stage_tree(step_entry)
-        if trace_text:
-            return trace_text
-
-    return ""
-
-
-def _read_pytest_trace(test_result_payload) -> str:
-    """Read pytest traceback text from case-level and nested stage payloads."""
-    test_body_stage = test_result_payload.get("testStage")
-    if isinstance(test_body_stage, dict):
-        trace_text = _read_trace_from_stage_tree(test_body_stage)
-        if trace_text:
-            return trace_text
-
-    trace_text = _read_trace_from_status_fields(test_result_payload)
-    if trace_text:
-        return trace_text
-
-    for stage_group_key in ("beforeStages", "afterStages"):
-        stage_entries = test_result_payload.get(stage_group_key)
-        if not isinstance(stage_entries, list):
-            continue
-        for stage_entry in stage_entries:
-            if not isinstance(stage_entry, dict):
-                continue
-            trace_text = _read_trace_from_stage_tree(stage_entry)
-            if trace_text:
-                return trace_text
-
-    return ""
-
-
 def _parse_test_identity(full_name_text, short_name_text) -> tuple[str, str]:
     """Split an Allure test identity into file path and test name."""
     module_logger.debug(f"Separating test identity: full_name={full_name_text}, short_name={short_name_text}")
@@ -501,7 +431,6 @@ def parse_allure_report_archive(report_archive_bytes) -> list[dict[str, str | in
                     )
                     normalized_result_status = "pass"
                     failure_timestamp_utc_text = ""
-            pytest_traceback = _read_pytest_trace(test_case_payload)
             test_run_identifier = _read_testrun_id(test_result_payload=test_case_payload, test_case_filename=test_case_file)
             unique_test_run_identifier = test_run_identifier
             duplicate_suffix_index = 2
@@ -510,10 +439,6 @@ def parse_allure_report_archive(report_archive_bytes) -> list[dict[str, str | in
                 duplicate_suffix_index += 1
 
             used_test_run_identifiers.add(unique_test_run_identifier)
-            if pytest_traceback:
-                module_logger.info(f"Collected pytest trace for {test_case_name or test_case_file}: {len(pytest_traceback)} chars")
-                module_logger.debug(f"Pytest trace content for {test_case_name or test_case_file}:\n{pytest_traceback}")
-
             parsed_results.append(
                 {
                     "file_path": source_file_path,
@@ -529,7 +454,6 @@ def parse_allure_report_archive(report_archive_bytes) -> list[dict[str, str | in
                     "duration_teardown_s": teardown_duration_seconds,
                     "failed_stage": failed_phase_name,
                     "failure_timestamp_utc": failure_timestamp_utc_text,
-                    "pytest_trace": pytest_traceback,
                 }
             )
 

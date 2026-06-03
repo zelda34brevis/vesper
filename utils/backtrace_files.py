@@ -3,13 +3,17 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
+import re
 import traceback
 from pathlib import Path
+from pathlib import PurePosixPath
+from zipfile import BadZipFile, ZipFile
 
 from .filesystem_helpers import make_safe_component, truncate_component
 from settings import TEST_IDENTIFIER_MARKER
 
 module_logger = logging.getLogger(__name__)
+BACKTRACE_LOG_BASENAME_PATTERN = re.compile(r"^backtrace_.*\.log$", re.IGNORECASE)
 
 
 def has_skipped_backtrace_tuple_shape(pytest_trace_text) -> bool:
@@ -89,6 +93,41 @@ def _make_safe_filename_component(raw_value, default_value) -> str:
     return make_safe_component(raw_value=raw_value, default_value=default_value, allow_dots=True)
 
 
+def _find_backtrace_members_in_archive(zip_archive) -> list[str]:
+    """Return sorted member names whose basename matches ``backtrace_.*.log``."""
+    matching_members: list[str] = []
+    for member_name in zip_archive.namelist():
+        if member_name.endswith("/"):
+            continue
+
+        member_basename = PurePosixPath(member_name).name
+        if BACKTRACE_LOG_BASENAME_PATTERN.fullmatch(member_basename):
+            matching_members.append(member_name)
+
+    return sorted(matching_members)
+
+
+def _read_backtrace_from_test_logs_archive(test_logs_archive_path) -> tuple[str, str]:
+    """Read the selected backtrace text from one downloaded per-test logs ZIP archive."""
+    archive_path = Path(test_logs_archive_path).expanduser()
+    if not archive_path.is_file():
+        raise FileNotFoundError(f"Test-logs archive not found: {archive_path}")
+
+    try:
+        with ZipFile(archive_path) as zip_archive:
+            matching_members = _find_backtrace_members_in_archive(zip_archive)
+            if not matching_members:
+                raise FileNotFoundError(
+                    f"No archive member matched pattern {BACKTRACE_LOG_BASENAME_PATTERN.pattern!r} in {archive_path}"
+                )
+
+            selected_member_name = matching_members[-1]
+            backtrace_payload = zip_archive.read(selected_member_name).decode("utf-8", errors="replace")
+            return selected_member_name, backtrace_payload
+    except BadZipFile as error_details:
+        raise ValueError(f"Invalid ZIP archive: {archive_path}") from error_details
+
+
 def compose_backtrace_filename(testrun_identifier, test_id_text = "") -> str:
     """Compose a per-test backtrace filename as <test_id>_<testrun_id>_backtrace.txt."""
     safe_test_identifier = _truncate_filename_component(
@@ -104,7 +143,7 @@ def compose_backtrace_filename(testrun_identifier, test_id_text = "") -> str:
 
 
 def store_test_backtrace_files(single_job_result, target_backtrace_directory) -> int:
-    """Write one backtrace text file per test into the scoped output directory."""
+    """Write one extracted device-backtrace text file per test into the scoped output directory."""
     test_entries = single_job_result.get("tests") or []
     target_backtrace_directory.mkdir(parents=True, exist_ok=True)
     saved_file_count = 0
@@ -115,11 +154,26 @@ def store_test_backtrace_files(single_job_result, target_backtrace_directory) ->
             test_run_identifier = f"legacy-{entry_index}"
             test_entry["testrun_id"] = test_run_identifier
 
-        pytest_traceback = str(test_entry.get("pytest_trace") or "")
         test_identifier = str(test_entry.get(TEST_IDENTIFIER_MARKER) or "").strip()
+        test_logs_archive_path = str(test_entry.get("test_logs_archive_path") or "").strip()
         base_filename = compose_backtrace_filename(testrun_identifier=test_run_identifier, test_id_text=test_identifier)
         test_entry["backtrace_sha256"] = ""
         test_entry["backtrace_file_path"] = ""
+
+        if not test_logs_archive_path:
+            module_logger.warning(
+                f"Skipping backtrace extraction because test_logs_archive_path is empty for test_id={test_identifier or test_run_identifier}"
+            )
+            continue
+
+        try:
+            selected_archive_member_name, backtrace_payload = _read_backtrace_from_test_logs_archive(test_logs_archive_path)
+        except Exception as error_details:
+            module_logger.warning(
+                f"Error: Could not read device backtrace from {test_logs_archive_path} for test_id={test_identifier or test_run_identifier}: {error_details}"
+            )
+            module_logger.warning(f"Stack trace: {traceback.format_exc()}")
+            continue
 
         output_result_path = _make_unique_output_path(
             target_backtrace_directory=target_backtrace_directory,
@@ -127,16 +181,17 @@ def store_test_backtrace_files(single_job_result, target_backtrace_directory) ->
         )
 
         try:
-            output_result_path.write_text(pytest_traceback, encoding="utf-8")
+            output_result_path.write_text(backtrace_payload, encoding="utf-8")
             test_entry["backtrace_file_path"] = str(output_result_path)
             if output_result_path.stat().st_size > 0:
                 payload_bytes = output_result_path.read_bytes()
                 test_entry["backtrace_sha256"] = hashlib.sha256(payload_bytes).hexdigest()
             saved_file_count += 1
+            module_logger.debug(
+                f"Saved backtrace file for test_id={test_identifier or test_run_identifier}: archive={test_logs_archive_path}, member={selected_archive_member_name}, output={output_result_path}"
+            )
         except Exception as error_details:
             module_logger.warning(f"Error: Could not save backtrace file {output_result_path}: {error_details}")
             module_logger.warning(f"Stack trace: {traceback.format_exc()}")
 
     return saved_file_count
-
-

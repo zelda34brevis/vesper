@@ -188,11 +188,11 @@ def discover_downstream_jobrun_urls(
     jenkins_username = JENKINS_USERNAME if jenkins_username is None else jenkins_username
     jenkins_api_token = JENKINS_API_TOKEN if jenkins_api_token is None else jenkins_api_token
 
-    canonical_root_run_url = normalize_run_url(pipeline_execution_url)
+    root_run_url_normalized = normalize_run_url(pipeline_execution_url)
     fetch_build = build_payload_fetcher or _create_build_fetcher(jenkins_username=jenkins_username, jenkins_api_token=jenkins_api_token)
-    module_logger.debug(f"Traversal starting URL: {canonical_root_run_url}")
+    module_logger.debug(f"Traversal starting URL: {root_run_url_normalized}")
 
-    pending_queue: deque[tuple[str, int]] = deque([(canonical_root_run_url, 0)])
+    pending_queue: deque[tuple[str, int]] = deque([(root_run_url_normalized, 0)])
     visited_run_urls: set[str] = set()
     discovered_run_urls: list[str] = []
     seen_run_urls: set[str] = set()
@@ -238,24 +238,24 @@ def discover_jobrun_urls_from_job_url_list(job_url_list: list[str]) -> list:
             module_logger.warning(f"Skipping invalid Jenkins job URL value: {raw_job_url!r}")
             continue
 
-        canonical_job_url = normalize_run_url(raw_job_url)
-        module_logger.info(f"Resolving latest build for Jenkins job: {canonical_job_url}")
+        job_url_normalized = normalize_run_url(raw_job_url)
+        module_logger.info(f"Resolving latest build for Jenkins job: {job_url_normalized}")
 
         try:
-            job_payload = fetch_job_payload(canonical_job_url)
+            job_payload = fetch_job_payload(job_url_normalized)
         except Exception as error_details:
-            module_logger.warning(f"Problem while fetching Jenkins job data for {canonical_job_url}: {error_details}")
+            module_logger.warning(f"Problem while fetching Jenkins job data for {job_url_normalized}: {error_details}")
             module_logger.warning(f"Stack trace: {traceback.format_exc()}")
             continue
 
         latest_run_payload = job_payload.get("lastCompletedBuild") or job_payload.get("lastBuild")
         if not isinstance(latest_run_payload, dict):
-            module_logger.warning(f"No latest Jenkins build metadata was found for {canonical_job_url}")
+            module_logger.warning(f"No latest Jenkins build metadata was found for {job_url_normalized}")
             continue
 
-        latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=canonical_job_url)
+        latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=job_url_normalized)
         if not latest_jobrun_url:
-            module_logger.warning(f"Could not resolve latest Jenkins build URL for {canonical_job_url}")
+            module_logger.warning(f"Could not resolve latest Jenkins build URL for {job_url_normalized}")
             continue
 
         if latest_jobrun_url in seen_jobrun_urls:

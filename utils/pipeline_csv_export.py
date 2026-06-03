@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
 
 from runtime_context import backtrace_output_directory
 from .backtrace_files import remove_skipped_and_empty_backtraces, store_test_backtrace_files
@@ -13,43 +12,57 @@ from .single_jobrun_results import collect_test_results_from_allure_report
 from .test_result_enrichment import attach_test_logs_to_single_result
 
 
+def _resolve_cache_scope_and_jobrun_urls(
+        pipeline_execution_url: str | None,
+        destination_csv_path,
+        max_traversal_depth,
+        jobrun_url_list: list[str] | None,
+        scoped_logger) -> tuple[str, list[str]]:
+    """Resolve the cache scope and the concrete list of job-run URLs to process."""
+    if pipeline_execution_url is not None and jobrun_url_list is None:
+        cache_scope_directory_name = make_pipeline_cache_scope_dirname(pipeline_execution_url)
+        jobrun_urls = discover_downstream_jobrun_urls(
+            pipeline_execution_url=pipeline_execution_url,
+            max_traversal_depth=max_traversal_depth,
+        )
+        if jobrun_urls:
+            return cache_scope_directory_name, jobrun_urls
+
+        fallback_root_run_url = normalize_run_url(pipeline_execution_url)
+        scoped_logger.warning(
+            "No downstream job runs were found for root run %s. "
+            "Switching to single-job mode and processing the root run directly.",
+            fallback_root_run_url,
+        )
+        return cache_scope_directory_name, [fallback_root_run_url]
+
+    if pipeline_execution_url is None and jobrun_url_list is not None:
+        return destination_csv_path.stem, list(jobrun_url_list)
+
+    raise ValueError("Invalid input: Provide either pipeline_execution_url OR job_list")
+
+
 def export_multi_jobs_results(
         pipeline_execution_url: str | None,
         destination_csv_path,
         max_traversal_depth=25,
-        jobrun_url_list: list[str] = None,
+        jobrun_url_list: list[str] | None = None,
         retain_latest_execution_per_job=True) -> int:
     """Collect multi job execution, download artifacts and export all test results to single CSV."""
 
-    if pipeline_execution_url is not None and jobrun_url_list is None:
-        mode = 'pipeline'
-        cache_scope_directory_name = make_pipeline_cache_scope_dirname(pipeline_execution_url)
-
-    elif pipeline_execution_url is None and jobrun_url_list is not None:
-        mode = 'job_list'
-        cache_scope_directory_name = destination_csv_path.stem
-    else:
-        raise ValueError("Invalid input: Provide either pipeline_execution_url OR job_list")
-
     module_logger = logging.getLogger(__name__)
     scoped_logger = module_logger
+    cache_scope_directory_name, jobrun_urls = _resolve_cache_scope_and_jobrun_urls(
+        pipeline_execution_url=pipeline_execution_url,
+        destination_csv_path=destination_csv_path,
+        max_traversal_depth=max_traversal_depth,
+        jobrun_url_list=jobrun_url_list,
+        scoped_logger=scoped_logger,
+    )
 
     backtrace_scope_directory = (backtrace_output_directory / cache_scope_directory_name).resolve()
     scoped_logger.debug(f"Selected cache-scope directory: {cache_scope_directory_name}")
     scoped_logger.debug(f"Selected backtrace-scope directory: {backtrace_scope_directory}")
-
-    if mode == 'pipeline':
-        jobrun_urls = discover_downstream_jobrun_urls(pipeline_execution_url=pipeline_execution_url, max_traversal_depth=max_traversal_depth)
-        if not jobrun_urls:
-            fallback_root_run_url = normalize_run_url(pipeline_execution_url)
-            scoped_logger.warning(
-                "No downstream job runs were found for root run %s. "
-                "Switching to single-job mode and processing the root run directly.",
-                fallback_root_run_url,
-            )
-            jobrun_urls = [fallback_root_run_url]
-    else:
-        jobrun_urls = jobrun_url_list
 
     scoped_logger.debug(f"Total job runs found: {len(jobrun_urls)}")
 
@@ -66,6 +79,11 @@ def export_multi_jobs_results(
                 current_jobrun_url,
                 report_cache_scope_name=cache_scope_directory_name,
             )
+            attach_test_logs_to_single_result(
+                single_run_result,
+                test_logs_artifact_cache=test_logs_artifact_cache,
+                logs_scope_name=cache_scope_directory_name,
+            )
             saved_backtrace_count = store_test_backtrace_files(
                 single_run_result,
                 target_backtrace_directory=backtrace_scope_directory,
@@ -76,11 +94,6 @@ def export_multi_jobs_results(
             )
             scoped_logger.debug(
                 f"Removed skipped or empty backtrace files for {job_display_name} #{job_run_number}: {deleted_backtrace_count}"
-            )
-            attach_test_logs_to_single_result(
-                single_run_result,
-                test_logs_artifact_cache=test_logs_artifact_cache,
-                logs_scope_name=cache_scope_directory_name,
             )
             total_test_count = single_run_result.get("tests_total", 0)
             scoped_logger.debug(f"Validated run {current_jobrun_url}: total_tests={total_test_count}")
