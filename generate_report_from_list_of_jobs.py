@@ -18,7 +18,6 @@ from runtime_context import aggregated_reports_directory
 from settings import JOB_URLS
 from utils.time_formatting import render_elapsed_time
 from utils.downstream_jobruns import discover_jobrun_urls_from_job_url_list
-from utils.multi_jobrun_csv_export import collect_from_jobruns_and_write_csv
 from utils.pipeline_csv_export import export_multi_jobs_results
 
 module_logger = logging.getLogger(__name__)
