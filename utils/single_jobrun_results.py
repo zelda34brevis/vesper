@@ -10,7 +10,7 @@ from runtime_context import JENKINS_USERNAME, JENKINS_API_TOKEN
 from settings import ALLURE_REPORTS_DIRECTORY
 from . import allure_zip_parser
 from .filesystem_helpers import make_safe_component
-from .jenkins_helpers import normalize_run_url, create_url_opener, fetch_url_bytes, fetch_url_json, \
+from .jenkins_helpers import normalize_run_url, create_url_opener, download_url_to_file, fetch_url_json, \
     parse_job_name_and_run_number
 
 module_logger = logging.getLogger(__name__)
@@ -94,20 +94,20 @@ def collect_test_results_from_allure_report(
     else:
         try:
             module_logger.info(f"Fetching bytes URL: {artifact_download_url} (timeout={request_timeout_seconds}s)")
-            zip_archive_bytes = fetch_url_bytes(artifact_download_url, url_opener=http_opener, request_timeout_seconds=request_timeout_seconds)
+            download_url_to_file(
+                source_url=artifact_download_url,
+                output_file_path=allure_archive_path,
+                url_opener=http_opener,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+            zip_archive_bytes = allure_archive_path.read_bytes()
             module_logger.debug(f"Fetched {len(zip_archive_bytes)} bytes from {artifact_download_url}")
         except Exception as error_details:
             module_logger.warning(f"Error: Unable to download {artifact_download_url}: {error_details}")
             module_logger.warning(f"Stack trace: {traceback.format_exc()}")
             raise RuntimeError(f"Unable to download the artifact from {artifact_download_url}") from error_details
 
-        try:
-            allure_archive_path.parent.mkdir(parents=True, exist_ok=True)
-            allure_archive_path.write_bytes(zip_archive_bytes)
-            module_logger.info(f"Saved allure ZIP: {allure_archive_path}")
-        except Exception as error_details:
-            module_logger.warning(f"Error: Unable to write the allure report archive {allure_archive_path}: {error_details}")
-            module_logger.warning(f"Stack trace: {traceback.format_exc()}")
+        module_logger.info(f"Saved allure ZIP: {allure_archive_path}")
 
     try:
         parsed_results = allure_zip_parser.parse_allure_report_archive(zip_archive_bytes)
@@ -145,4 +145,3 @@ def _compose_allure_zip_path(
         allure_reports_root_directory = allure_reports_root_directory / make_safe_component(report_cache_scope_name, default_value="unknown_scope", allow_dots=True)
 
     return allure_reports_root_directory / f"{safe_job_label}-{safe_run_label}-allure-report.zip"
-
