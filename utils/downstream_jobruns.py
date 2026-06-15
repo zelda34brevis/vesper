@@ -7,7 +7,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from runtime_context import JENKINS_USERNAME, JENKINS_API_TOKEN
-from .jenkins_helpers import normalize_run_url, compose_job_path, create_url_opener, fetch_url_json
+from .jenkins_helpers import has_explicit_run_number, normalize_run_url, compose_job_path, create_url_opener, fetch_url_json
 
 module_logger = logging.getLogger(__name__)
 
@@ -161,6 +161,43 @@ def _collect_downstream_urls(build_payload, parent_base_url) -> list[str]:
     return collected_downstream_urls
 
 
+def resolve_job_url_to_latest_jobrun_url(
+    job_or_jobrun_url: str,
+    jenkins_username = None,
+    jenkins_api_token = None,
+    job_payload_fetcher = None,
+) -> str:
+    """Return a normalized Jenkins run URL, resolving job URLs to their latest numeric build via lastBuild."""
+    normalized_url = normalize_run_url(job_or_jobrun_url)
+    if has_explicit_run_number(normalized_url):
+        module_logger.debug(f"Jenkins URL already contains an explicit run number: {normalized_url}")
+        return normalized_url
+
+    module_logger.info(f"Resolving latest Jenkins build for job URL: {normalized_url}")
+    fetch_job_payload = job_payload_fetcher or _create_job_fetcher(
+        jenkins_username=jenkins_username,
+        jenkins_api_token=jenkins_api_token,
+    )
+
+    try:
+        job_payload = fetch_job_payload(normalized_url)
+    except Exception as error_details:
+        raise RuntimeError(f"Could not fetch Jenkins job metadata for {normalized_url}: {error_details}") from error_details
+
+    latest_run_payload = job_payload.get("lastBuild")
+    if not isinstance(latest_run_payload, dict):
+        raise RuntimeError(f"Could not resolve latest Jenkins build URL for {normalized_url}: no lastBuild metadata found")
+
+    latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=normalized_url)
+    if not latest_jobrun_url or not has_explicit_run_number(latest_jobrun_url):
+        raise RuntimeError(
+            f"Could not resolve latest Jenkins build URL for {normalized_url}: lastBuild payload did not contain a numeric run URL"
+        )
+
+    module_logger.info(f"Resolved latest Jenkins build URL: {latest_jobrun_url}")
+    return latest_jobrun_url
+
+
 def discover_downstream_jobrun_urls(
     pipeline_execution_url,
     jenkins_username = None,
@@ -229,7 +266,6 @@ def discover_downstream_jobrun_urls(
 
 def discover_jobrun_urls_from_job_url_list(job_url_list: list[str]) -> list:
     module_logger.info(f"Starting latest-jobrun discovery for {len(job_url_list)} Jenkins jobs")
-    fetch_job_payload = _create_job_fetcher()
     discovered_jobrun_urls: list[str] = []
     seen_jobrun_urls: set[str] = set()
 
@@ -242,20 +278,10 @@ def discover_jobrun_urls_from_job_url_list(job_url_list: list[str]) -> list:
         module_logger.info(f"Resolving latest build for Jenkins job: {job_url_normalized}")
 
         try:
-            job_payload = fetch_job_payload(job_url_normalized)
+            latest_jobrun_url = resolve_job_url_to_latest_jobrun_url(job_url_normalized)
         except Exception as error_details:
             module_logger.warning(f"Problem while fetching Jenkins job data for {job_url_normalized}: {error_details}")
             module_logger.warning(f"Stack trace: {traceback.format_exc()}")
-            continue
-
-        latest_run_payload = job_payload.get("lastCompletedBuild") or job_payload.get("lastBuild")
-        if not isinstance(latest_run_payload, dict):
-            module_logger.warning(f"No latest Jenkins build metadata was found for {job_url_normalized}")
-            continue
-
-        latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=job_url_normalized)
-        if not latest_jobrun_url:
-            module_logger.warning(f"Could not resolve latest Jenkins build URL for {job_url_normalized}")
             continue
 
         if latest_jobrun_url in seen_jobrun_urls:

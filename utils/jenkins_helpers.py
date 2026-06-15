@@ -385,6 +385,13 @@ def parse_job_name_and_run_number(run_base_url) -> tuple[str, str]:
     return job_display_name, job_run_number
 
 
+def has_explicit_run_number(raw_url) -> bool:
+    """Return True when a Jenkins URL ends with a numeric build segment."""
+    sanitized_value = str(raw_url).strip()
+    path_segments = [path_part for path_part in urlsplit(sanitized_value).path.split("/") if path_part]
+    return bool(path_segments and path_segments[-1].isdigit())
+
+
 def normalize_run_url(raw_url) -> str:
     """Return a canonical Jenkins run URL without query or fragment and with a trailing slash."""
     sanitized_value = str(raw_url).strip()
