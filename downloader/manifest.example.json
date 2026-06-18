@@ -1,0 +1,63 @@
+{
+  "created_at_utc": "2026-06-18T09:12:34.567890+00:00",
+  "source_mode": "pipeline_url",
+  "scope_name": "nightly-main-4821",
+  "requested_urls": [
+    "https://jenkins.example/job/nightly-main/"
+  ],
+  "resolved_root_run_url": "https://jenkins.example/job/nightly-main/4821/",
+  "build_selector": "lastCompletedBuild",
+  "failed_urls": [
+    {
+      "url": "https://jenkins.example/job/nightly-main/job/tests/job/optional-suite/154/",
+      "error": "HTTP Error 404: Not Found"
+    }
+  ],
+  "runs": [
+    {
+      "job_name": "nightly-main/tests/smoke",
+      "job_run_number": "153",
+      "run_url": "https://jenkins.example/job/nightly-main/job/tests/job/smoke/153/",
+      "requested_by_urls": [
+        "https://jenkins.example/job/nightly-main/"
+      ],
+      "run_directory": "nightly-main_tests_smoke-153",
+      "artifact_count": 2,
+      "artifacts": [
+        {
+          "artifact_type": "allure-report",
+          "file_name": "allure-report.zip",
+          "source_relative_path": "reports/allure-report.zip",
+          "relative_path": "nightly-main_tests_smoke-153/reports/allure-report.zip",
+          "download_url": "https://jenkins.example/job/nightly-main/job/tests/job/smoke/153/artifact/reports/allure-report.zip"
+        },
+        {
+          "artifact_type": "zip",
+          "file_name": "AUTO-A1234_logs.zip",
+          "source_relative_path": "logs/AUTO-A1234_logs.zip",
+          "relative_path": "nightly-main_tests_smoke-153/logs/AUTO-A1234_logs.zip",
+          "download_url": "https://jenkins.example/job/nightly-main/job/tests/job/smoke/153/artifact/logs/AUTO-A1234_logs.zip"
+        }
+      ]
+    },
+    {
+      "job_name": "nightly-main/tests/regression",
+      "job_run_number": "87",
+      "run_url": "https://jenkins.example/job/nightly-main/job/tests/job/regression/87/",
+      "requested_by_urls": [
+        "https://jenkins.example/job/nightly-main/"
+      ],
+      "run_directory": "nightly-main_tests_regression-87",
+      "artifact_count": 1,
+      "artifacts": [
+        {
+          "artifact_type": "zip",
+          "file_name": "AUTO-A5678_logs.zip",
+          "source_relative_path": "AUTO-A5678_logs.zip",
+          "relative_path": "nightly-main_tests_regression-87/AUTO-A5678_logs.zip",
+          "download_url": "https://jenkins.example/job/nightly-main/job/tests/job/regression/87/artifact/AUTO-A5678_logs.zip"
+        }
+      ]
+    }
+  ]
+}

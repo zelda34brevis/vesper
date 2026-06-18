@@ -27,8 +27,8 @@ class InputConfig:
 
 @dataclass
 class ParsingConfig:
-    test_identifier_prefix: str = "SWDEV-T"
-    test_identifier_marker: str = "zephyr_id"
+    test_identifier_prefix: str = "AUTO-A"
+    test_identifier_marker: str = "test_id"
     retain_latest_execution_per_job: bool = True
     partial_mode: str = "warn"
 
@@ -928,5 +928,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

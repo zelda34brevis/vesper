@@ -1,0 +1,47 @@
+{
+  "created_at_utc": "2026-06-18T10:05:12.135790+00:00",
+  "source_mode": "job_url_list",
+  "scope_name": "job-batch-2026-06-18T10-05-12Z",
+  "requested_urls": [
+    "https://jenkins.example/job/mobile-smoke/",
+    "https://jenkins.example/job/mobile-smoke/321/",
+    "https://jenkins.example/job/backend-regression/"
+  ],
+  "resolved_root_run_url": null,
+  "build_selector": "lastBuild",
+  "failed_urls": [
+    {
+      "url": "https://jenkins.example/job/backend-regression/",
+      "error": "Could not resolve lastBuild for https://jenkins.example/job/backend-regression/"
+    }
+  ],
+  "runs": [
+    {
+      "job_name": "mobile-smoke",
+      "job_run_number": "321",
+      "run_url": "https://jenkins.example/job/mobile-smoke/321/",
+      "requested_by_urls": [
+        "https://jenkins.example/job/mobile-smoke/",
+        "https://jenkins.example/job/mobile-smoke/321/"
+      ],
+      "run_directory": "mobile-smoke-321",
+      "artifact_count": 2,
+      "artifacts": [
+        {
+          "artifact_type": "allure-report",
+          "file_name": "allure-report.zip",
+          "source_relative_path": "allure-report.zip",
+          "relative_path": "mobile-smoke-321/allure-report.zip",
+          "download_url": "https://jenkins.example/job/mobile-smoke/321/artifact/allure-report.zip"
+        },
+        {
+          "artifact_type": "zip",
+          "file_name": "AUTO-A9001_logs.zip",
+          "source_relative_path": "logs/AUTO-A9001_logs.zip",
+          "relative_path": "mobile-smoke-321/logs/AUTO-A9001_logs.zip",
+          "download_url": "https://jenkins.example/job/mobile-smoke/321/artifact/logs/AUTO-A9001_logs.zip"
+        }
+      ]
+    }
+  ]
+}

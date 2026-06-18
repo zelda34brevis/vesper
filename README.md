@@ -19,3 +19,10 @@ This project now contains two independent applications:
   <job_name>-<run_number>/
     ...downloaded ZIP artifacts...
 ```
+
+## Integration notes
+
+- `manifest.json` is the hand-off contract between `downloader` and any paired application.
+- Concrete examples are available at [`downloader/manifest.example.json`](./downloader/manifest.example.json) for `pipeline_url` mode and [`downloader/manifest.job-url-list.example.json`](./downloader/manifest.job-url-list.example.json) for `job_url_list` mode.
+- Field-by-field integration details are documented in [`downloader/README.md`](./downloader/README.md).
+
