@@ -1,0 +1,25 @@
+{
+  "jenkins": {
+    "username_env": "JENKINS_API_USER",
+    "token_env": "JENKINS_API_TOKEN",
+    "request_timeout_seconds": 30
+  },
+  "input": {
+    "pipeline_url": null,
+    "job_urls": [
+      "http://jenkins:8080/job/example-job/",
+      "http://jenkins:8080/job/example-other-job/153/"
+    ],
+    "job_urls_skip": [
+      "http://jenkins:8080/job/example-job-to-skip/"
+    ],
+    "build_selector": "lastBuild",
+    "max_traversal_depth": 25,
+    "fallback_to_root_run_when_no_downstream": true
+  },
+  "output": {
+    "output_root": "~/vesper_downloader_output",
+    "scope_name": null,
+    "download_only_zip": true
+  }
+}
