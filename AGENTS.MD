@@ -25,6 +25,8 @@
 * Use parametrization instead of duplicating tests.
 * Ensure proper cleanup of resources created during tests.
 * Make test failures easy to diagnose with sufficient information for root cause analysis.
+* Avoid arbitrary sleeps; prefer explicit waiting conditions.
+* Prefer page objects, drivers, adapters, or service abstractions over direct API calls.
 
 # Integration and External Systems
 
@@ -48,6 +50,7 @@
 * Do not suppress exceptions without a clear reason.
 * Do not ignore warnings, errors, or failed test results.
 * Do not generate test logic that talks to hardware directly - use existing drivers and adapters.
+* Never hardcode credentials, tokens, certificates, or private keys.
 * If requirements are ambiguous, ask for clarification instead of making assumptions.
 
 # Domain-Specific Instructions
