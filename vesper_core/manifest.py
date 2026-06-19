@@ -97,7 +97,7 @@ class RunRecord:
 
 @dataclass(frozen=True)
 class Manifest:
-    """Strict hand-off contract between downloader and reporter."""
+    """Strict hand-off contract for consumers."""
 
     created_at_utc: str
     source_mode: str
