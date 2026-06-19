@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+import traceback
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.client import IncompleteRead
 from pathlib import Path
@@ -11,6 +12,13 @@ from typing import Any, Callable, Mapping
 from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from urllib.request import HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener as urllib_build_opener, urlopen
+
+from vesper_core import ArtifactRecord, FailedUrlRecord, Manifest, RunRecord, make_safe_component, manifest_path_for_scope
+
+if __package__ in {None, ""}:
+    from logging_utils import configure_logging
+else:
+    from .logging_utils import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 DOWNLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
@@ -59,57 +67,9 @@ class DownloaderConfig:
 
 
 @dataclass
-class FailedUrlRecord:
-    url: str
-    error: str
-
-
-@dataclass
-class ArtifactRecord:
-    artifact_type: str
-    file_name: str
-    source_relative_path: str
-    relative_path: str
-    download_url: str
-
-
-@dataclass
-class RunRecord:
-    job_name: str
-    job_run_number: str
-    run_url: str
-    requested_by_urls: list[str]
-    run_directory: str
-    artifact_count: int
-    artifacts: list[ArtifactRecord]
-
-
-@dataclass
-class Manifest:
-    created_at_utc: str
-    source_mode: str
-    scope_name: str
-    requested_urls: list[str]
-    resolved_root_run_url: str | None
-    build_selector: str
-    failed_urls: list[FailedUrlRecord]
-    runs: list[RunRecord]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
 class ResolvedRunRequest:
     run_url: str
     requested_by_urls: list[str] = field(default_factory=list)
-
-
-def configure_logging(verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
 
 
 def load_config(config_path: Path) -> DownloaderConfig:
@@ -136,18 +96,6 @@ def validate_config(config: DownloaderConfig) -> None:
 
 def get_timestamp_iso() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-
-
-def make_safe_component(raw_value: Any, default_value: str, allow_dots: bool = True) -> str:
-    import re
-
-    sanitized_value = str(raw_value).strip()
-    sanitized_value = re.sub(r"\s+", "_", sanitized_value)
-    sanitized_pattern = r"[^A-Za-z0-9._-]" if allow_dots else r"[^A-Za-z0-9_-]"
-    sanitized_value = re.sub(sanitized_pattern, "_", sanitized_value)
-    strip_chars = "._-" if allow_dots else "_-"
-    sanitized_value = re.sub(r"_+", "_", sanitized_value).strip(strip_chars)
-    return sanitized_value or default_value
 
 
 def normalize_run_url(raw_url: str) -> str:
@@ -682,17 +630,18 @@ def discover_downstream_jobrun_urls(
         visited_run_urls.add(current_run_url)
 
         try:
-            payload_bytes = build_payload_fetcher(current_run_url)
+            build_payload = build_payload_fetcher(current_run_url)
         except HTTPError as error_details:
             if error_details.code == 404:
                 LOGGER.warning("Skipping missing Jenkins run %s (HTTP 404)", current_run_url)
                 continue
             LOGGER.warning("Problem while fetching Jenkins run data for %s: %s", current_run_url, error_details)
+            continue
         except Exception as error_details:
             LOGGER.warning("Problem while fetching Jenkins run data for %s: %s", current_run_url, error_details)
             continue
 
-        for child_run_url in _collect_downstream_urls(payload_bytes, parent_base_url=current_run_url):
+        for child_run_url in _collect_downstream_urls(build_payload, parent_base_url=current_run_url):
             if child_run_url not in seen_run_urls:
                 discovered_run_urls.append(child_run_url)
                 seen_run_urls.add(child_run_url)
@@ -898,8 +847,8 @@ def run_downloader(
         failed_urls=failed_urls,
         runs=run_records,
     )
-    manifest_path = scope_directory / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest_path = manifest_path_for_scope(scope_directory)
+    manifest.write_text(manifest_path)
     LOGGER.info("Manifest written: %s", manifest_path)
     return manifest_path
 
@@ -925,5 +874,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

@@ -1,0 +1,4 @@
+include pyproject.toml
+include vesper_core/README.md
+include vesper_core/PUBLISHING.md
+recursive-include vesper_core *.py

@@ -2,6 +2,8 @@
 
 Independent CLI application that resolves Jenkins job URLs or pipeline URLs, downloads ZIP artifacts, and writes a local `manifest.json`.
 
+The `manifest.json` schema is owned by the internal shared package `vesper_core`.
+
 ## Behavior
 
 - If input URL already points to a concrete job run, it is used as-is.
@@ -29,6 +31,7 @@ Example payloads:
 - [`manifest.job-url-list.example.json`](./manifest.job-url-list.example.json) — `job_url_list` mode
 
 If you want to build another application that works together with `downloader`, treat `manifest.json` as the integration contract.
+`downloader` is the producer of that contract; strict schema loading and validation live in `vesper_core`, not in Jenkins-specific code.
 
 ### Top-level fields
 
