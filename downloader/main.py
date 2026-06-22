@@ -26,6 +26,18 @@ DEFAULT_FILE_DOWNLOAD_ATTEMPTS = 6
 MAX_UNEXPECTED_FULL_RESPONSE_RESETS = 1
 
 
+def _format_byte_count(byte_count: int) -> str:
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    size = float(byte_count)
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{byte_count} {units[unit_index]}"
+    return f"{size:.1f} {units[unit_index]} ({byte_count} bytes)"
+
+
 @dataclass
 class JenkinsConfig:
     base_url: str | None = None
@@ -346,6 +358,7 @@ def download_url_to_file(
     output_file_path = Path(output_file_path)
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
     if output_file_path.exists():
+        LOGGER.info("Reusing existing downloaded file: %s -> %s", source_url, output_file_path)
         return output_file_path
 
     partial_output_path = output_file_path.parent / f"{output_file_path.name}.part"
@@ -427,6 +440,16 @@ def download_url_to_file(
                 LOGGER.warning("Traceback: %s", traceback.format_exc())
                 break
 
+            LOGGER.info(
+                "Downloading file (attempt %s/%s): %s -> %s [total=%s%s]",
+                attempt_number,
+                max_file_download_attempts,
+                source_url,
+                output_file_path,
+                _format_byte_count(expected_total_bytes),
+                f", resume={_format_byte_count(resumed_from_byte)}" if resumed_from_byte else "",
+            )
+
             try:
                 _stream_response_into_file(http_response=http_response, destination_path=partial_output_path)
             except IncompleteRead as error_details:
@@ -463,6 +486,12 @@ def download_url_to_file(
                 expected_total_bytes=expected_total_bytes,
                 source_url=source_url,
             ):
+                LOGGER.info(
+                    "Finished download: %s -> %s [%s]",
+                    source_url,
+                    output_file_path,
+                    _format_byte_count(expected_total_bytes),
+                )
                 return output_file_path
         except RuntimeError as error_details:
             last_error = error_details
