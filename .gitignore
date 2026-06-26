@@ -4,4 +4,5 @@ settings.py
 build/
 dist/
 *.egg-info/
+.release-venv/
 venv

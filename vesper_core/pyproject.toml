@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "vesper-core"
 version = "0.1.0"
 description = "Shared manifest contract and neutral utilities for vesper applications"
-readme = "vesper_core/README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 dependencies = []
 

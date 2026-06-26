@@ -1,14 +1,33 @@
-# Summary
+# vesper-core
 
-Vesper downloader gets the artifacts from CI, stores them in a structured way, and provide a manifest.json for consumers.
+Shared manifest contract and neutral utilities for applications that consume artifacts produced by the Vesper downloader.
 
-Vesper core is a library that provides a common contract for working with the artifacts and manifest produced by the downloader, and is intended to be used by consumers.
+## Included modules
 
-## Packaging
+- `vesper_core.manifest` — strict manifest data model and validation
+- `vesper_core.text` — safe text helpers for filesystem-friendly names
 
-- The repository root `pyproject.toml` builds/installs `vesper_core`.
-- Private-package publishing steps are documented in [`PUBLISHING.md`](./PUBLISHING.md).
+## Install
 
 ```bash
-python3 -m pip install --no-deps --target /tmp/vesper-core-test /path/to/vesper
+python3 -m pip install vesper-core
 ```
+
+For local editable development from this repository:
+
+```bash
+python3 -m pip install -e /path/to/vesper/vesper_core
+```
+
+## Build
+
+```bash
+make clean
+make bootstrap-tools
+make build-wheel
+make build-sdist
+make build
+make check-dist
+```
+
+The `Makefile` bootstraps a local `.release-venv` with `build` and `twine` automatically.

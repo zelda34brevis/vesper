@@ -1,33 +1,19 @@
-# Publishing `vesper_core` as a private package
+# Publishing `vesper-core`
 
-## Assumptions
+## Tooling setup
 
-- package publication goes to a private Python package index.
-- credentials are provided through environment variables or CI secrets.
-
-## One-time local setup
-
-Install release tooling from the package's optional `release` extra:
+`make` bootstraps a local `.release-venv` with `build` and `twine` automatically. If you want to pre-create it:
 
 ```bash
-cd /path/to/vesper
-python3 -m pip install -e ".[release]"
-```
-
-If you prefer an isolated tool directory instead of an editable install:
-
-```bash
-cd /path/to/vesper
-python3 -m pip install --target /tmp/vesper-release-tools ".[release]"
+cd /path/to/vesper/vesper_core
+make bootstrap-tools
 ```
 
 ## Build release artifacts
 
-From the repository root:
-
 ```bash
-cd /path/to/vesper
-python3 -m build --sdist --wheel
+cd /path/to/vesper/vesper_core
+make build
 ```
 
 Expected artifacts:
@@ -38,8 +24,8 @@ Expected artifacts:
 ## Validate artifacts before upload
 
 ```bash
-cd /path/to/vesper
-python3 -m twine check dist/*
+cd /path/to/vesper/vesper_core
+make check-dist
 ```
 
 Optional isolated validation install:
@@ -50,31 +36,16 @@ python3 -m pip install --no-deps --target /tmp/vesper-core-validate dist/vesper_
 python3 -c 'import sys; sys.path.insert(0, "/tmp/vesper-core-validate"); import vesper_core; print(sorted(vesper_core.__all__))'
 ```
 
-## Upload to a private index
-
-Example using an explicit repository URL:
+## Upload
 
 ```bash
-cd /path/to/vesper
-export TWINE_USERNAME="__token__"
-export TWINE_PASSWORD="<private-package-token>"
-python3 -m twine upload --repository-url "$VESPER_CORE_REPOSITORY_URL" dist/*
+cd /path/to/vesper/vesper_core
+make publish TWINE_ARGS="--repository-url https://packages.example/simple/"
 ```
 
-If your CI uses a named repository from `.pypirc`, the upload command becomes:
+For a named repository from `.pypirc`:
 
 ```bash
-cd /path/to/vesper
-python3 -m twine upload --repository vesper-private dist/*
+cd /path/to/vesper/vesper_core
+make publish TWINE_ARGS="--repository vesper-private"
 ```
-
-## Release checklist
-
-Before uploading:
-
-1. update `version` in `pyproject.toml`
-2. run the unit tests
-3. build `sdist` and `wheel`
-4. run `twine check`
-5. validate installation from the built wheel
-6. upload to the private index
