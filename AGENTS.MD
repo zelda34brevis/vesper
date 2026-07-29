@@ -38,10 +38,10 @@
 # Constraints
 
 * Read and understand existing code before making changes.
-* Search for existing implementations before creating new ones.
-* Reuse existing utilities, helpers, fixtures, drivers, adapters, and abstractions whenever possible.
-* Prefer the smallest correct solution.
+* Search for existing implementations (utilities, helpers, fixtures, drivers, adapters, abstractions, etc.) before creating new ones and reuse them.
+* Do not generate test logic that talks to hardware directly - use existing drivers and adapters.
 * Do not create new files unless no existing file is appropriate.
+* Prefer the smallest correct solution.
 * Keep changes minimal, localized, and easy to review.
 * Do not perform large-scale or opportunistic refactoring unless explicitly requested.
 * Do not introduce new dependencies without clear justification.
@@ -49,7 +49,6 @@
 * Do not remove existing functionality unless explicitly requested.
 * Do not suppress exceptions without a clear reason.
 * Do not ignore warnings, errors, or failed test results.
-* Do not generate test logic that talks to hardware directly - use existing drivers and adapters.
 * Never hardcode credentials, tokens, certificates, or private keys.
 * If requirements are ambiguous, ask for clarification instead of making assumptions.
 

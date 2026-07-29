@@ -4,11 +4,11 @@ import json
 import logging
 import os
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from http.client import IncompleteRead
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, TypeVar
 from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from urllib.request import HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener as urllib_build_opener, urlopen
@@ -78,6 +78,9 @@ class DownloaderConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
 
 
+ConfigSection = TypeVar("ConfigSection", JenkinsConfig, InputConfig, OutputConfig)
+
+
 @dataclass
 class ResolvedRunRequest:
     run_url: str
@@ -87,10 +90,27 @@ class ResolvedRunRequest:
 def load_config(config_path: Path) -> DownloaderConfig:
     raw_payload = json.loads(config_path.read_text(encoding="utf-8"))
     return DownloaderConfig(
-        jenkins=JenkinsConfig(**raw_payload.get("jenkins", {})),
-        input=InputConfig(**raw_payload.get("input", {})),
-        output=OutputConfig(**raw_payload.get("output", {})),
+        jenkins=_load_config_section(raw_payload.get("jenkins", {}), JenkinsConfig, "jenkins"),
+        input=_load_config_section(raw_payload.get("input", {}), InputConfig, "input"),
+        output=_load_config_section(raw_payload.get("output", {}), OutputConfig, "output"),
     )
+
+
+def _load_config_section(raw_section: Any, config_type: type[ConfigSection], section_name: str) -> ConfigSection:
+    if raw_section is None:
+        return config_type()
+    if not isinstance(raw_section, Mapping):
+        raise ValueError(f"{section_name} config section must be a JSON object")
+    allowed_field_names = {config_field.name for config_field in fields(config_type)}
+    filtered_section = {key: value for key, value in raw_section.items() if key in allowed_field_names}
+    unexpected_field_names = sorted(set(raw_section) - allowed_field_names)
+    if unexpected_field_names:
+        LOGGER.warning(
+            "Ignoring unexpected %s config field(s): %s",
+            section_name,
+            ", ".join(unexpected_field_names),
+        )
+    return config_type(**filtered_section)
 
 
 def validate_config(config: DownloaderConfig) -> None:
