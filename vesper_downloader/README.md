@@ -8,10 +8,10 @@ The `manifest.json` schema is owned by `vesper-core`, which is now published as 
 
 - If input URL already points to a concrete job run, it is used as-is.
 - If input URL points only to a Jenkins job, the app resolves the latest run using `input.build_selector`.
-- In `pipeline_url` mode the app resolves the root run, traverses downstream runs, and downloads artifacts for each discovered run.
+- In `pipeline_url` mode the app expects the root URL to point to a Jenkins MultiJob job/run, resolves the root run, traverses downstream runs, and downloads artifacts for each discovered run.
 - In `job_url_list` mode the app processes each input independently, deduplicates identical resolved run URLs, and preserves all original source URLs in `manifest.json`.
 - `input.job_urls_skip` accepts Jenkins job URLs (or explicit run URLs that belong to those jobs) and excludes every matching run from both modes.
-- If `input.pipeline_url` itself belongs to a skipped job, or if the skip filtering leaves nothing to process, the downloader exits with an error.
+- If `input.pipeline_url` resolves to a Jenkins Pipeline job/run, if it belongs to a skipped job, or if the skip filtering leaves nothing to process, the downloader exits with an error.
 - By default only `.zip` artifacts are downloaded.
 
 ## Output layout

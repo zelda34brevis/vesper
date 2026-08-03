@@ -24,6 +24,14 @@ LOGGER = logging.getLogger(__name__)
 DOWNLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 DEFAULT_FILE_DOWNLOAD_ATTEMPTS = 6
 MAX_UNEXPECTED_FULL_RESPONSE_RESETS = 1
+JENKINS_MULTIJOB_CLASS_NAMES = {"com.tikal.jenkins.plugins.multijob.MultiJobProject"}
+JENKINS_MULTIJOB_RUN_CLASS_NAMES = {"com.tikal.jenkins.plugins.multijob.MultiJobBuild"}
+JENKINS_PIPELINE_CLASS_NAMES = {"org.jenkinsci.plugins.workflow.job.WorkflowJob"}
+JENKINS_PIPELINE_RUN_CLASS_NAMES = {"org.jenkinsci.plugins.workflow.job.WorkflowRun"}
+
+
+class UnsupportedJenkinsJobTypeError(RuntimeError):
+    """Raised when the configured Jenkins input uses an unsupported job type."""
 
 
 def _format_byte_count(byte_count: int) -> str:
@@ -530,7 +538,7 @@ def create_job_payload_fetcher(config: DownloaderConfig) -> Callable[[str], dict
     timeout_seconds = config.jenkins.request_timeout_seconds
 
     def fetch_job_payload(normalized_job_url: str) -> dict[str, Any]:
-        api_tree = "url,fullName,name,lastCompletedBuild[url,number],lastBuild[url,number]"
+        api_tree = "_class,url,fullName,name,lastCompletedBuild[url,number],lastBuild[url,number]"
         api_endpoint_url = f"{normalize_run_url(normalized_job_url)}api/json?tree={api_tree}"
         return fetch_url_json(target_url=api_endpoint_url, url_opener=url_opener, request_timeout_seconds=timeout_seconds)
 
@@ -543,7 +551,7 @@ def create_build_payload_fetcher(config: DownloaderConfig) -> Callable[[str], di
 
     def fetch_build_payload(normalized_build_run_url: str) -> dict[str, Any]:
         api_tree = (
-            "url,subBuilds[url,jobName,jobUrl,buildNumber],"
+            "_class,url,subBuilds[url,jobName,jobUrl,buildNumber],"
             "runs[url,jobName,jobUrl,buildNumber],"
             "builds[url,jobName,jobUrl,buildNumber],"
             "actions[downstreamBuilds[url,jobName,jobUrl,buildNumber],"
@@ -623,14 +631,46 @@ def resolve_job_url_to_run_url(
         return normalized_url
 
     job_payload = job_payload_fetcher(normalized_url)
+    return _resolve_run_url_from_job_payload(
+        normalized_job_url=normalized_url,
+        build_selector=build_selector,
+        job_payload=job_payload,
+    )
+
+
+def _resolve_run_url_from_job_payload(
+    normalized_job_url: str,
+    build_selector: str,
+    job_payload: Mapping[str, Any],
+) -> str:
     latest_run_payload = job_payload.get(build_selector)
     if not isinstance(latest_run_payload, dict):
-        raise RuntimeError(f"Could not resolve {build_selector} for {normalized_url}")
+        raise RuntimeError(f"Could not resolve {build_selector} for {normalized_job_url}")
 
-    latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=normalized_url)
+    latest_jobrun_url = _resolve_child_run_url(latest_run_payload, parent_base_url=normalized_job_url)
     if not latest_jobrun_url or not has_explicit_run_number(latest_jobrun_url):
-        raise RuntimeError(f"Could not resolve a numeric run URL for {normalized_url}")
+        raise RuntimeError(f"Could not resolve a numeric run URL for {normalized_job_url}")
     return latest_jobrun_url
+
+
+def _classify_jenkins_root_type(class_name: object) -> str:
+    if not isinstance(class_name, str):
+        return "unknown"
+    if class_name in JENKINS_MULTIJOB_CLASS_NAMES or class_name in JENKINS_MULTIJOB_RUN_CLASS_NAMES:
+        return "multijob"
+    if class_name in JENKINS_PIPELINE_CLASS_NAMES or class_name in JENKINS_PIPELINE_RUN_CLASS_NAMES:
+        return "pipeline"
+    return "unknown"
+
+
+def _raise_if_pipeline_root(root_url: str, class_name: object) -> None:
+    if _classify_jenkins_root_type(class_name) != "pipeline":
+        return
+    if not isinstance(class_name, str):
+        class_name = "unknown"
+    raise UnsupportedJenkinsJobTypeError(
+        f"Jenkins root {normalize_run_url(root_url)} uses Pipeline type {class_name}; only MultiJob roots are supported"
+    )
 
 
 def _collect_downstream_urls(build_payload: dict[str, Any], parent_base_url: str) -> list[str]:
@@ -735,11 +775,19 @@ def _resolve_requested_runs(
     if input_config.pipeline_url:
         source_mode = "pipeline_url"
         requested_urls = [input_config.pipeline_url]
-        resolved_root_run_url = resolve_job_url_to_run_url(
-            input_config.pipeline_url,
-            build_selector=input_config.build_selector,
-            job_payload_fetcher=job_payload_fetcher,
-        )
+        normalized_pipeline_url = normalize_run_url(input_config.pipeline_url)
+        if has_explicit_run_number(normalized_pipeline_url):
+            root_build_payload = build_payload_fetcher(normalized_pipeline_url)
+            _raise_if_pipeline_root(normalized_pipeline_url, root_build_payload.get("_class"))
+            resolved_root_run_url = normalized_pipeline_url
+        else:
+            root_job_payload = job_payload_fetcher(normalized_pipeline_url)
+            _raise_if_pipeline_root(normalized_pipeline_url, root_job_payload.get("_class"))
+            resolved_root_run_url = _resolve_run_url_from_job_payload(
+                normalized_job_url=normalized_pipeline_url,
+                build_selector=input_config.build_selector,
+                job_payload=root_job_payload,
+            )
         downstream_jobrun_urls = discover_downstream_jobrun_urls(
             root_run_url=resolved_root_run_url,
             build_payload_fetcher=build_payload_fetcher,
@@ -915,8 +963,12 @@ def main() -> int:
     args = parse_args()
     configure_logging(verbose=args.verbose)
     config_path = Path(args.config).expanduser().resolve()
-    config = load_config(config_path)
-    manifest_path = run_downloader(config)
+    try:
+        config = load_config(config_path)
+        manifest_path = run_downloader(config)
+    except UnsupportedJenkinsJobTypeError as error_details:
+        LOGGER.error("%s", error_details)
+        return 2
     LOGGER.info("Download complete. Manifest: %s", manifest_path)
     return 0
 
