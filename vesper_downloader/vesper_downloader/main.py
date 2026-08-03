@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import traceback
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
@@ -28,10 +29,10 @@ JENKINS_MULTIJOB_CLASS_NAMES = {"com.tikal.jenkins.plugins.multijob.MultiJobProj
 JENKINS_MULTIJOB_RUN_CLASS_NAMES = {"com.tikal.jenkins.plugins.multijob.MultiJobBuild"}
 JENKINS_PIPELINE_CLASS_NAMES = {"org.jenkinsci.plugins.workflow.job.WorkflowJob"}
 JENKINS_PIPELINE_RUN_CLASS_NAMES = {"org.jenkinsci.plugins.workflow.job.WorkflowRun"}
-
-
-class UnsupportedJenkinsJobTypeError(RuntimeError):
-    """Raised when the configured Jenkins input uses an unsupported job type."""
+PIPELINE_WFAPI_RUN_LINK_PATTERN = re.compile(
+    r"""href=['"](?P<url>(?:https?://[^'"]+)?/job/[^/'"]+(?:/job/[^/'"]+)*/\d+/)['"]""",
+    re.IGNORECASE,
+)
 
 
 def _format_byte_count(byte_count: int) -> str:
@@ -591,14 +592,30 @@ def create_artifact_downloader(config: DownloaderConfig) -> Callable[[str, Path]
     return perform_download
 
 
+def create_pipeline_api_fetcher(config: DownloaderConfig) -> Callable[[str], dict[str, Any]]:
+    url_opener = create_url_opener(config.jenkins.username, config.jenkins.token)
+    timeout_seconds = config.jenkins.request_timeout_seconds
+
+    def fetch_pipeline_api_payload(target_url: str) -> dict[str, Any]:
+        return fetch_url_json(target_url=target_url, url_opener=url_opener, request_timeout_seconds=timeout_seconds)
+
+    return fetch_pipeline_api_payload
+
+
+def _resolve_relative_jenkins_url(candidate_url: str, parent_base_url: str) -> str:
+    if "://" in candidate_url:
+        return candidate_url
+    root_url_parts = urlsplit(parent_base_url)
+    relative_path = candidate_url if candidate_url.startswith("/") else f"/{candidate_url}"
+    return urlunsplit((root_url_parts.scheme, root_url_parts.netloc, relative_path, "", ""))
+
+
 def _resolve_child_run_url(item_payload: dict[str, Any], parent_base_url: str) -> str | None:
     direct_run_url = item_payload.get("url")
     if isinstance(direct_run_url, str) and direct_run_url.strip():
         if "://" in direct_run_url:
             return normalize_run_url(direct_run_url)
-        root_url_parts = urlsplit(parent_base_url)
-        relative_path = direct_run_url if direct_run_url.startswith("/") else f"/{direct_run_url}"
-        return normalize_run_url(urlunsplit((root_url_parts.scheme, root_url_parts.netloc, relative_path, "", "")))
+        return normalize_run_url(_resolve_relative_jenkins_url(direct_run_url, parent_base_url=parent_base_url))
 
     resolved_build_number = item_payload.get("buildNumber", item_payload.get("number"))
     if isinstance(resolved_build_number, str) and resolved_build_number.isdigit():
@@ -663,14 +680,116 @@ def _classify_jenkins_root_type(class_name: object) -> str:
     return "unknown"
 
 
-def _raise_if_pipeline_root(root_url: str, class_name: object) -> None:
-    if _classify_jenkins_root_type(class_name) != "pipeline":
-        return
-    if not isinstance(class_name, str):
-        class_name = "unknown"
-    raise UnsupportedJenkinsJobTypeError(
-        f"Jenkins root {normalize_run_url(root_url)} uses Pipeline type {class_name}; only MultiJob roots are supported"
-    )
+def _collect_pipeline_wfapi_node_log_urls(node_payload: Mapping[str, Any], parent_base_url: str) -> list[str]:
+    collected_log_urls: list[str] = []
+    pending_nodes: list[Mapping[str, Any]] = [node_payload]
+
+    while pending_nodes:
+        current_node = pending_nodes.pop()
+        links_payload = current_node.get("_links")
+        if isinstance(links_payload, Mapping):
+            log_payload = links_payload.get("log")
+            if isinstance(log_payload, Mapping):
+                log_href = log_payload.get("href")
+                if isinstance(log_href, str) and log_href.strip():
+                    collected_log_urls.append(_resolve_relative_jenkins_url(log_href, parent_base_url=parent_base_url))
+
+        stage_flow_nodes = current_node.get("stageFlowNodes")
+        if isinstance(stage_flow_nodes, list):
+            for nested_node in stage_flow_nodes:
+                if isinstance(nested_node, Mapping):
+                    pending_nodes.append(nested_node)
+
+    return collected_log_urls
+
+
+def _extract_pipeline_run_urls_from_log_text(log_text: str, parent_base_url: str) -> list[str]:
+    collected_run_urls: list[str] = []
+    for matched_link in PIPELINE_WFAPI_RUN_LINK_PATTERN.finditer(log_text):
+        collected_run_urls.append(
+            normalize_run_url(
+                _resolve_relative_jenkins_url(matched_link.group("url"), parent_base_url=parent_base_url)
+            )
+        )
+    return collected_run_urls
+
+
+def _discover_pipeline_downstream_urls_via_wfapi(
+    pipeline_run_url: str,
+    pipeline_api_fetcher: Callable[[str], dict[str, Any]] | None,
+) -> list[str]:
+    if pipeline_api_fetcher is None:
+        return []
+
+    normalized_pipeline_run_url = normalize_run_url(pipeline_run_url)
+    root_wfapi_endpoint_url = f"{normalized_pipeline_run_url}wfapi/describe"
+    try:
+        root_wfapi_payload = pipeline_api_fetcher(root_wfapi_endpoint_url)
+    except HTTPError as error_details:
+        if error_details.code != 404:
+            LOGGER.warning("Problem while fetching Pipeline wfapi data for %s: %s", normalized_pipeline_run_url, error_details)
+        return []
+    except Exception as error_details:
+        LOGGER.warning("Problem while fetching Pipeline wfapi data for %s: %s", normalized_pipeline_run_url, error_details)
+        return []
+
+    collected_run_urls: list[str] = []
+    seen_run_urls: set[str] = set()
+    stage_entries = root_wfapi_payload.get("stages")
+    if not isinstance(stage_entries, list):
+        stage_entries = []
+
+    for stage_entry in stage_entries:
+        if not isinstance(stage_entry, Mapping):
+            continue
+        stage_links = stage_entry.get("_links")
+        if not isinstance(stage_links, Mapping):
+            continue
+        stage_self_payload = stage_links.get("self")
+        if not isinstance(stage_self_payload, Mapping):
+            continue
+        stage_self_href = stage_self_payload.get("href")
+        if not isinstance(stage_self_href, str) or not stage_self_href.strip():
+            continue
+
+        stage_endpoint_url = _resolve_relative_jenkins_url(stage_self_href, parent_base_url=normalized_pipeline_run_url)
+        try:
+            stage_node_payload = pipeline_api_fetcher(stage_endpoint_url)
+        except HTTPError as error_details:
+            if error_details.code != 404:
+                LOGGER.warning("Problem while fetching Pipeline stage data for %s: %s", stage_endpoint_url, error_details)
+            continue
+        except Exception as error_details:
+            LOGGER.warning("Problem while fetching Pipeline stage data for %s: %s", stage_endpoint_url, error_details)
+            continue
+
+        log_urls = _collect_pipeline_wfapi_node_log_urls(stage_node_payload, parent_base_url=normalized_pipeline_run_url)
+        if not log_urls:
+            continue
+
+        for log_url in log_urls:
+            try:
+                log_payload = pipeline_api_fetcher(log_url)
+            except HTTPError as error_details:
+                if error_details.code != 404:
+                    LOGGER.warning("Problem while fetching Pipeline step log for %s: %s", log_url, error_details)
+                continue
+            except Exception as error_details:
+                LOGGER.warning("Problem while fetching Pipeline step log for %s: %s", log_url, error_details)
+                continue
+
+            raw_log_text = log_payload.get("text")
+            if not isinstance(raw_log_text, str) or not raw_log_text.strip():
+                continue
+            for child_run_url in _extract_pipeline_run_urls_from_log_text(
+                raw_log_text,
+                parent_base_url=normalized_pipeline_run_url,
+            ):
+                if child_run_url not in seen_run_urls:
+                    collected_run_urls.append(child_run_url)
+                    seen_run_urls.add(child_run_url)
+
+    return collected_run_urls
 
 
 def _collect_downstream_urls(build_payload: dict[str, Any], parent_base_url: str) -> list[str]:
@@ -704,6 +823,7 @@ def discover_downstream_jobrun_urls(
     root_run_url: str,
     build_payload_fetcher: Callable[[str], dict[str, Any]],
     max_traversal_depth: int,
+    pipeline_api_fetcher: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[str]:
     from collections import deque
 
@@ -730,7 +850,14 @@ def discover_downstream_jobrun_urls(
             LOGGER.warning("Problem while fetching Jenkins run data for %s: %s", current_run_url, error_details)
             continue
 
-        for child_run_url in _collect_downstream_urls(build_payload, parent_base_url=current_run_url):
+        child_run_urls = _collect_downstream_urls(build_payload, parent_base_url=current_run_url)
+        if not child_run_urls and _classify_jenkins_root_type(build_payload.get("_class")) == "pipeline":
+            child_run_urls = _discover_pipeline_downstream_urls_via_wfapi(
+                current_run_url,
+                pipeline_api_fetcher=pipeline_api_fetcher,
+            )
+
+        for child_run_url in child_run_urls:
             if child_run_url not in seen_run_urls:
                 discovered_run_urls.append(child_run_url)
                 seen_run_urls.add(child_run_url)
@@ -767,6 +894,7 @@ def _resolve_requested_runs(
     config: DownloaderConfig,
     job_payload_fetcher: Callable[[str], dict[str, Any]],
     build_payload_fetcher: Callable[[str], dict[str, Any]],
+    pipeline_api_fetcher: Callable[[str], dict[str, Any]] | None = None,
 ) -> tuple[str, list[str], str | None, list[ResolvedRunRequest], list[FailedUrlRecord]]:
     input_config = config.input
     failed_urls: list[FailedUrlRecord] = []
@@ -777,12 +905,9 @@ def _resolve_requested_runs(
         requested_urls = [input_config.pipeline_url]
         normalized_pipeline_url = normalize_run_url(input_config.pipeline_url)
         if has_explicit_run_number(normalized_pipeline_url):
-            root_build_payload = build_payload_fetcher(normalized_pipeline_url)
-            _raise_if_pipeline_root(normalized_pipeline_url, root_build_payload.get("_class"))
             resolved_root_run_url = normalized_pipeline_url
         else:
             root_job_payload = job_payload_fetcher(normalized_pipeline_url)
-            _raise_if_pipeline_root(normalized_pipeline_url, root_job_payload.get("_class"))
             resolved_root_run_url = _resolve_run_url_from_job_payload(
                 normalized_job_url=normalized_pipeline_url,
                 build_selector=input_config.build_selector,
@@ -792,6 +917,7 @@ def _resolve_requested_runs(
             root_run_url=resolved_root_run_url,
             build_payload_fetcher=build_payload_fetcher,
             max_traversal_depth=input_config.max_traversal_depth,
+            pipeline_api_fetcher=pipeline_api_fetcher,
         )
         if not downstream_jobrun_urls and input_config.fallback_to_root_run_when_no_downstream:
             downstream_jobrun_urls = [resolved_root_run_url]
@@ -895,12 +1021,14 @@ def run_downloader(
     config: DownloaderConfig,
     job_payload_fetcher: Callable[[str], dict[str, Any]] | None = None,
     build_payload_fetcher: Callable[[str], dict[str, Any]] | None = None,
+    pipeline_api_fetcher: Callable[[str], dict[str, Any]] | None = None,
     artifact_metadata_fetcher: Callable[[str], dict[str, Any]] | None = None,
     artifact_downloader: Callable[[str, Path], Path] | None = None,
 ) -> Path:
     validate_config(config)
     resolved_job_payload_fetcher = job_payload_fetcher or create_job_payload_fetcher(config)
     resolved_build_payload_fetcher = build_payload_fetcher or create_build_payload_fetcher(config)
+    resolved_pipeline_api_fetcher = pipeline_api_fetcher or create_pipeline_api_fetcher(config)
     resolved_artifact_metadata_fetcher = artifact_metadata_fetcher or create_artifact_metadata_fetcher(config)
     resolved_artifact_downloader = artifact_downloader or create_artifact_downloader(config)
 
@@ -908,6 +1036,7 @@ def run_downloader(
         config=config,
         job_payload_fetcher=resolved_job_payload_fetcher,
         build_payload_fetcher=resolved_build_payload_fetcher,
+        pipeline_api_fetcher=resolved_pipeline_api_fetcher,
     )
     scope_name = select_scope_name(config, source_mode=source_mode, resolved_root_run_url=resolved_root_run_url)
     output_root = Path(config.output.output_root).expanduser().resolve()
@@ -963,12 +1092,8 @@ def main() -> int:
     args = parse_args()
     configure_logging(verbose=args.verbose)
     config_path = Path(args.config).expanduser().resolve()
-    try:
-        config = load_config(config_path)
-        manifest_path = run_downloader(config)
-    except UnsupportedJenkinsJobTypeError as error_details:
-        LOGGER.error("%s", error_details)
-        return 2
+    config = load_config(config_path)
+    manifest_path = run_downloader(config)
     LOGGER.info("Download complete. Manifest: %s", manifest_path)
     return 0
 
